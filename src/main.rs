@@ -119,8 +119,8 @@ struct Candles {
 
 
 impl Candles {
-    //Получаем реальные свечи с bybit
-    //TODO вытащить максимально возможное плечо
+    ///Получаем реальные свечи с bybit
+    ///TODO вытащить максимально возможное плечо
     fn get_real_candles(category: &str, symbol: &str, interval: &str, limit: &str, timeframe: u8) -> Result<Self, Box<dyn std::error::Error>> { 
         let client = reqwest::blocking::Client::new(); 
         let mut params = std::collections::HashMap::new(); 
@@ -141,7 +141,7 @@ impl Candles {
         Ok(Self::parse_candles(&response_text, timeframe)?) 
     } 
 
-    //Парсим ответ bybit в свечи
+    ///Парсим ответ bybit в свечи
     fn parse_candles(response: &str, timeframe: u8) -> Result<Self, Box<dyn std::error::Error>> { 
         let json: Value = serde_json::from_str(response)?; 
 
@@ -181,7 +181,7 @@ impl Candles {
 }
 
 
-//По сути бесполезная структура
+///По сути бесполезная структура
 impl Data_to_Table {
     fn new(name: String, diff: f64, persent_for_diff: f64, amount: f64, schoulder: f64, persent_to_buy: f64, persent_to_sell: f64) -> Self {
         Self {
@@ -247,7 +247,7 @@ impl Clients_data {
 }
 
 
-//Подписываем токен
+///Подписываем токен
 fn get_token(sa_key: &ServiceAccountKey) -> Result<String, Box<dyn std::error::Error>> {
     // текущее время
     let now = Utc::now();
@@ -289,7 +289,7 @@ fn get_token(sa_key: &ServiceAccountKey) -> Result<String, Box<dyn std::error::E
 }
 
 
-//Получаем свечи, которые не учитываем
+///Получаем свечи, которые не учитываем
 fn get_coins_not_count(data: &Option<Vec<Vec<String>>>) -> Vec<String> {
     if let Some(data) = data {
         let result = data
@@ -310,7 +310,7 @@ fn get_coins_not_count(data: &Option<Vec<Vec<String>>>) -> Vec<String> {
 }
 
 
-//Получаем активные свечи с bybit
+///Получаем активные свечи с bybit
 fn get_active_coin() -> Result<HashMap<String, LeverageFilter>, Box<dyn std::error::Error>> {
     let client = reqwest::blocking::Client::new();
 
@@ -355,7 +355,7 @@ fn get_active_coin() -> Result<HashMap<String, LeverageFilter>, Box<dyn std::err
 }
 
 
-//Прочитать значение таблицы
+///Прочитать значение таблицы
 fn read_sheet(spreadsheet_id: &str, token: &str, range: &str) -> Result<SheetValues, Box<dyn std::error::Error>> {
     let url = format!(
         "https://sheets.googleapis.com/v4/spreadsheets/{}/values/{}!{}",
@@ -374,7 +374,7 @@ fn read_sheet(spreadsheet_id: &str, token: &str, range: &str) -> Result<SheetVal
     Ok(resp)
 }
 
-//добавить элемент в таблицу
+///добавить элемент в таблицу
 fn add_elements(spreadsheet_id: &str, token: &str, range: &str, values: &Vec<Vec<String>>) -> Result<(), Box<dyn std::error::Error>> {
     let url = format!(
         "https://sheets.googleapis.com/v4/spreadsheets/{}/values/Лист1!{}?valueInputOption=RAW",
@@ -400,7 +400,7 @@ fn add_elements(spreadsheet_id: &str, token: &str, range: &str, values: &Vec<Vec
 }
 
 
-//Считаем увеличение цены
+///Считаем увеличение цены
 fn calculate_grows_rate(coins: &Vec<String>, n: usize) -> Result<Vec<(String, f64)>, Box<dyn std::error::Error>> {
     let mut vec_pct: Vec<(String, f64)> = Vec::new();
 
@@ -435,8 +435,8 @@ fn calculate_grows_rate(coins: &Vec<String>, n: usize) -> Result<Vec<(String, f6
 }
 
 
-//Функция отправки ордера на bybit
-//В данный момент заглушка
+///Функция отправки ордера на bybit
+///В данный момент заглушка
 fn send_order(coin: String, amount: f64, schoulder: f64, sell: f64, stop: f64) {
     println!("Отправляем ордер для {coin}");
 }
