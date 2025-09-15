@@ -10,23 +10,33 @@ use reqwest::blocking::Client;
 
 use dotenv::dotenv;
 
-use comfy_table::{Row};
+use hex;
+
+use hmac::{Hmac, Mac};
+
+use sha2::Sha256;
 
 
+use core::f64;
 use std::{ env, fs};
 use std::thread::sleep;
 use std::time::{Duration};
-use std::{borrow::Borrow, cmp::Ordering, collections::HashMap};
+use std::{cmp::Ordering, collections::HashMap};
 
 
-const BASE_URL_API:&str = "https://api.bybit.com/v5/market/kline";
-const URL_FOR_ACTIVE: &str = "https://api.bybit.com/v5/market/instruments-info";
+const BASE_URL_API:&str = "https://api-testnet.bybit.com/v5/market/kline";
+const URL_FOR_ACTIVE: &str = "https://api-testnet.bybit.com/v5/market/instruments-info";
+const TRADE_URL_API:&str = "https://api-testnet.bybit.com/v5/order/create";
 
 
+type HmacSha256 = Hmac<Sha256>;
+
+
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct SheetValues {
     range: Option<String>,
-    majorDimension: Option<String>,
+    major_dimension: Option<String>,
     values: Option<Vec<Vec<String>>>,
 }
 
@@ -45,6 +55,7 @@ struct ServiceAccountKey {
     private_key: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct TokenResponse {
     access_token: String,
@@ -52,13 +63,16 @@ struct TokenResponse {
     token_type: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 struct LeverageFilter {
-    minLeverage: String,
-    maxLeverage: String,
-    leverageStep: String,
+    min_leverage: String,
+    max_leverage: String,
+    leverage_step: String,
 }
 
+#[allow(non_snake_case)]
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct Instrument {
     symbol: String,
@@ -74,6 +88,8 @@ struct ResultData {
     list: Vec<Instrument>,
 }
 
+#[allow(non_snake_case)]
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct ApiResponse {
     retCode: i32,
@@ -82,7 +98,7 @@ struct ApiResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct Data_to_Table {
+struct DataToTable {
     name: String,
     diff: f64,
     persent_for_diff: f64,
@@ -92,14 +108,17 @@ struct Data_to_Table {
     persent_to_sell: f64,
 }
 
-struct Clients_data {
+struct ClientsData {
     persent_to_buy: f64,
     amount: f64,
     schoulder: f64,
     fixation_persent: f64,
     stop_percentage: f64,
+    side: String,
+    persent_to_limit: f64,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct Candle {
     open: f64,
@@ -111,6 +130,7 @@ struct Candle {
 }
 
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct Candles {
     candles: Vec<Candle>,
@@ -138,7 +158,7 @@ impl Candles {
 
         //TODO добавить проверку, что ответ адекватный - не пустой, не битый и так далее 
 
-        Ok(Self::parse_candles(&response_text, timeframe)?) 
+        Self::parse_candles(&response_text, timeframe) 
     } 
 
     ///Парсим ответ bybit в свечи
@@ -182,7 +202,7 @@ impl Candles {
 
 
 ///По сути бесполезная структура
-impl Data_to_Table {
+impl DataToTable {
     fn new(name: String, diff: f64, persent_for_diff: f64, amount: f64, schoulder: f64, persent_to_buy: f64, persent_to_sell: f64) -> Self {
         Self {
             name,
@@ -193,10 +213,6 @@ impl Data_to_Table {
             persent_to_buy,
             persent_to_sell
         }
-    }
-
-    fn to_row(&self) -> Row {
-        Row::from(Self::to_str(&self))
     }
 
     fn to_str(&self) -> Vec<String> {
@@ -213,36 +229,41 @@ impl Data_to_Table {
 }
 
 
-impl Clients_data {
+impl ClientsData {
     ///Получить данные от клиетна для данной валюты и для (минимального, максимального и шага) плеча
-    fn get_data_to_currentpercent(coin: String, diff: f64, schoulder: LeverageFilter, spreadsheet_id: &str, token: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        let data = read_sheet(spreadsheet_id, token, "A2::F1000")?;
+    fn get_data_to_currentpercent(coin: String, diff: f64, schoulder: LeverageFilter, spreadsheet_id: &str, token: &str) -> Result<Option<Self>, Box<dyn std::error::Error>> {
+        let data = read_sheet(spreadsheet_id, token, "A2::H1000")?;
 
         let values = data.values.unwrap_or_default();
 
         if let Some(row) = values.into_iter().find(|row| {
-            row.get(0).map(|c| *c == coin).unwrap_or(false) &&
+            row.first().map(|c| *c == coin).unwrap_or(false) &&
             row.get(1)
                 .and_then(|v| v.parse::<f64>().ok())
                 .map(|v| diff >= v)
                 .unwrap_or(false)
         }) {
-            Ok(Clients_data {
-                persent_to_buy: row.get(1).and_then(|v| v.parse::<f64>().ok()).unwrap_or(1.5),
-                amount: row.get(2).and_then(|v| v.parse::<f64>().ok()).unwrap_or(100.0),
-                schoulder: row.get(3).and_then(|v| v.parse::<f64>().ok()).unwrap_or(35.0),
-                fixation_persent: row.get(4).and_then(|v| v.parse::<f64>().ok()).unwrap_or(4.0),
-                stop_percentage: row.get(5).and_then(|v| v.parse::<f64>().ok()).unwrap_or(2.0),
-            })
-        } else {
-            Ok(Clients_data {
-                persent_to_buy: 1.5,
-                amount: 100.0,
-                schoulder: 35.0,
-                fixation_persent: 4.0,
-                stop_percentage: 2.0,
-            })
-        }
+            let mut shoulder = row.get(3).and_then(|v| v.parse::<f64>().ok()).unwrap_or(f64::INFINITY);
+
+            if shoulder != f64::INFINITY {
+                if shoulder > schoulder.max_leverage.parse()? {
+                    shoulder = schoulder.max_leverage.parse()?;
+                } else if shoulder < schoulder.min_leverage.parse()? {
+                    shoulder = schoulder.min_leverage.parse()?;
+                }
+            }
+
+            return Ok(Some(ClientsData {
+                persent_to_buy: row.get(1).and_then(|v| v.parse::<f64>().ok()).unwrap_or(f64::INFINITY),
+                amount: row.get(2).and_then(|v| v.parse::<f64>().ok()).unwrap_or(f64::INFINITY),
+                schoulder: shoulder,
+                fixation_persent: row.get(4).and_then(|v| v.parse::<f64>().ok()).unwrap_or(f64::INFINITY),
+                stop_percentage: row.get(5).and_then(|v| v.parse::<f64>().ok()).unwrap_or(f64::INFINITY),
+                side: row.get(6).and_then(|v| v.parse::<String>().ok()).unwrap_or("".to_string()),
+                persent_to_limit: row.get(7).and_then(|v| v.parse::<f64>().ok()).unwrap_or(f64::INFINITY),
+            }));
+        };
+        Ok(None)
     }
 }
 
@@ -252,7 +273,7 @@ fn get_token(sa_key: &ServiceAccountKey) -> Result<String, Box<dyn std::error::E
     // текущее время
     let now = Utc::now();
     let iat = now.timestamp() as usize;
-    let exp = (now + chrono::Duration::hours(1)).timestamp() as usize;
+    let exp = usize::try_from((now + chrono::Duration::hours(1)).timestamp())?;
 
     // формируем claims
     let claims = Claims {
@@ -292,8 +313,8 @@ fn get_token(sa_key: &ServiceAccountKey) -> Result<String, Box<dyn std::error::E
 ///Получаем свечи, которые не учитываем
 fn get_coins_not_count(data: &Option<Vec<Vec<String>>>) -> Vec<String> {
     if let Some(data) = data {
-        let result = data
-            .into_iter()
+        data
+            .iter()
             .filter_map(|row| {
                 if row.len() == 1 {
                     Some(row[0].clone())
@@ -301,11 +322,9 @@ fn get_coins_not_count(data: &Option<Vec<Vec<String>>>) -> Vec<String> {
                     None
                 }
             })
-            .collect();
-        
-        return result;
+            .collect()
     } else {
-        return Vec::new();
+        Vec::new()
     }
 }
 
@@ -328,7 +347,7 @@ fn get_active_coin() -> Result<HashMap<String, LeverageFilter>, Box<dyn std::err
 
     if data.retCode != 0 { 
         eprintln!("API error: {}", data.retMsg); 
-        Err::<Vec<String>, std::string::String>(data.retMsg); 
+        return Err(data.retMsg.into()); 
     } 
 
     let output: HashMap<String, LeverageFilter> = data.result
@@ -340,13 +359,11 @@ fn get_active_coin() -> Result<HashMap<String, LeverageFilter>, Box<dyn std::err
                 x.symbol.clone(), 
                 x.leverageFilter
                     .clone()
-                    .unwrap_or(
-                        LeverageFilter { 
-                            minLeverage: "1".to_string(), 
-                            maxLeverage: "1".to_string(), 
-                            leverageStep: "0".to_string(), 
-                        }
-                    )
+                    .unwrap_or_else(|| LeverageFilter { 
+                            min_leverage: "1".to_string(), 
+                            max_leverage: "1".to_string(), 
+                            leverage_step: "0".to_string(), 
+                        })
             )
         }
         ).collect();
@@ -389,7 +406,7 @@ fn add_elements(spreadsheet_id: &str, token: &str, range: &str, values: &Vec<Vec
     });
 
     let client = Client::new();
-    let resp = client
+    let _resp = client
         .put(&url)
         .bearer_auth(token)
         .json(&body)
@@ -401,21 +418,29 @@ fn add_elements(spreadsheet_id: &str, token: &str, range: &str, values: &Vec<Vec
 
 
 ///Считаем увеличение цены
-fn calculate_grows_rate(coins: &Vec<String>, n: usize) -> Result<Vec<(String, f64)>, Box<dyn std::error::Error>> {
-    let mut vec_pct: Vec<(String, f64)> = Vec::new();
+fn calculate_grows_rate(coins: &Vec<String>, _n: usize) -> Result<Vec<(String, f64, f64)>, Box<dyn std::error::Error>> {
+    let mut vec_pct: Vec<(String, f64, f64)> = Vec::new();
 
     for coin in coins {
         sleep(Duration::from_millis(60));
 
-        let candles = Candles::get_real_candles("spot", coin, "1", "5", 1)?;
+        let candles = loop {
+            match Candles::get_real_candles("spot", coin, "1", "5", 1) {
+                Ok(candles) => break candles,
+                Err(err) => {
+                    eprintln!("Ошибка при получении свечей: {err}. Пробуем снова");
+                    sleep(Duration::from_secs(1));
+                }
+            }
+        };
 
-        if candles.candles.len() != 0 {
+        if !candles.candles.is_empty() {
             let first_open = candles.candles.first().unwrap().open;
             let last_close = candles.candles.last().unwrap().close;
 
             let diff = (last_close - first_open) / first_open * 100.0;
 
-            vec_pct.push((coin.clone(), diff));
+            vec_pct.push((coin.clone(), diff, last_close));
         }
     }
 
@@ -428,17 +453,86 @@ fn calculate_grows_rate(coins: &Vec<String>, n: usize) -> Result<Vec<(String, f6
     });
 
     // урезаем до n
-    vec_pct.truncate(n);
+    //vec_pct.truncate(n);
 
 
     Ok(vec_pct)
 }
 
 
+fn generate_get_signature(timestamp: &str, api_key: &str, recv_window: &str, params: &HashMap<&str, &str>, api_secret: &str) -> Result<String, Box<dyn std::error::Error>> {
+    let mut mac = HmacSha256::new_from_slice(api_secret.as_bytes()).expect("HMAC can take key of any size");
+    mac.update(timestamp.as_bytes());
+    mac.update(api_key.as_bytes());
+    mac.update(recv_window.as_bytes());
+    mac.update(generate_query_str(params).as_bytes());
+
+    let result = mac.finalize();
+    let code_bytes = result.into_bytes();
+    Ok(hex::encode(code_bytes))
+}
+
+
+fn generate_query_str(params: &HashMap<&str, &str>) -> String {
+    params.iter()
+        .map(|(key, value)| format!("{}={}", key, value))
+        .collect::<Vec<String>>()
+        .join("&")
+}
+
+
 ///Функция отправки ордера на bybit
-///В данный момент заглушка
-fn send_order(coin: String, amount: f64, schoulder: f64, sell: f64, stop: f64) {
-    println!("Отправляем ордер для {coin}");
+fn send_order(
+    api_key: &str,
+    api_secret: &str,
+    timestamp: &str,
+    recv_window: &str,
+    coin: &str,
+    qty: f64,
+    last_close: f64,
+    persent_to_limit: f64,
+    leverage: f64,
+    tp: f64,
+    sl: f64,
+    side: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let client = reqwest::blocking::Client::new();
+
+    let price = if side == "UP" {last_close + last_close * persent_to_limit} else {last_close - last_close * persent_to_limit};
+
+    let mut params = HashMap::new();
+    params.insert("category", "spot");
+    params.insert("symbol", coin);
+    params.insert("side", "Buy");
+    params.insert("orderType", "Limit");
+    let binding = qty.to_string();
+    params.insert("qty", &binding);
+    let binding = price.to_string();
+    params.insert("price", &binding);
+    params.insert("timeInForce", "GTC");
+    let binding = tp.to_string();
+    params.insert("takeProfit", &binding);
+    let binding = sl.to_string();
+    params.insert("stopLoss", &binding);
+    let binding = leverage.to_string();
+    params.insert("leverage", &binding);
+
+    let signature = generate_get_signature(&timestamp, api_key, recv_window, &params, api_secret)?;
+
+    let resp = client
+        .post(TRADE_URL_API)
+        .header("X-BAPI-API-KEY", api_key)
+        .header("X-BAPI-SIGN", signature)
+        .header("X-BAPI-SIGN-TYPE", "2")
+        .header("X-BAPI-TIMESTAMP", timestamp)
+        .header("X-BAPI-RECV-WINDOW", recv_window)
+        .json(&params)
+        .send()?
+        .text()?;
+
+    println!("Order response: {}", resp);
+
+    Ok(())
 }
 
 
@@ -452,6 +546,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let token = get_token(&sa_key)?;
     
     let spreadsheet_id = env::var("SPREADSHEET_ID").expect("SpreadSheet_ID must be set");
+    let api_key = env::var("API_KEY").expect("API_KEY must be set");
+    let api_secret = env::var("API_SECRET").expect("API_SECRET must be set");
 
     let client_data = read_sheet(&spreadsheet_id, &token, "A2:F1000")?;
     
@@ -466,22 +562,60 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     //убираем из активных монет, те, которые не учитываем
     let set: std::collections::HashSet<_> = coins_not_count.into_iter().collect();
-    let coins: Vec<_> = active_coins.into_iter().filter(|x| !set.contains(x)).collect();
+    let coins: Vec<_> = active_coins
+        .into_iter()
+        .filter(|x| 
+            !set.contains(x)
+        ).collect();
 
     //Считаем изменение цены(30 лучших)
-    let coins_growth_rate: Vec<(String, f64)> = calculate_grows_rate(&coins, 30)?;
+    let coins_growth_rate: Vec<(String, f64, f64)> = calculate_grows_rate(&coins, 30)?;
 
-    let mut res: Vec<Data_to_Table> = Vec::new();
+    let mut res: Vec<DataToTable> = Vec::new();
 
     //собираем таблицу
-    for (coin, diff) in &coins_growth_rate {
-        let client_data = Clients_data::get_data_to_currentpercent(coin.clone(), *diff, data[coin].clone(), &spreadsheet_id, &token)?;
+    for (coin, diff, last_close) in &coins_growth_rate {
+        let client_data = ClientsData::get_data_to_currentpercent(coin.clone(), *diff, data[coin].clone(), &spreadsheet_id, &token)?;
 
-        if *diff >= client_data.persent_to_buy {
-            send_order(coin.clone(), client_data.amount, client_data.schoulder, client_data.fixation_persent, client_data.stop_percentage);
+        let client_data = match client_data {
+            Some(c_data) => c_data,
+            None => continue,
+        };
+
+        if client_data.side == "" || (
+            client_data.persent_to_buy == f64::INFINITY ||
+            client_data.amount == f64::INFINITY ||
+            client_data.schoulder == f64::INFINITY ||
+            client_data.fixation_persent == f64::INFINITY ||
+            client_data.stop_percentage == f64::INFINITY ||
+            client_data.persent_to_limit == f64::INFINITY
+        ) {
+            continue;
         }
 
-        let t = Data_to_Table::new(coin.clone(), *diff, client_data.persent_to_buy, client_data.amount, client_data.schoulder, client_data.fixation_persent, client_data.stop_percentage);
+        if *diff >= client_data.persent_to_buy {
+
+            //TODO Убрать 0.0 и заглушки для апи
+            let timestamp = chrono::Utc::now().timestamp_millis().to_string();
+            let recv_window = "5000";
+            
+            send_order(
+                &api_key,
+                &api_secret,
+                &timestamp, 
+                recv_window, 
+                &coin.clone(), 
+                client_data.amount, 
+                *last_close, 
+                client_data.persent_to_limit, 
+                client_data.schoulder, 
+                client_data.fixation_persent, 
+                client_data.stop_percentage,
+                &client_data.side
+            )?;
+        }
+
+        let t = DataToTable::new(coin.clone(), *diff, client_data.persent_to_buy, client_data.amount, client_data.schoulder, client_data.fixation_persent, client_data.stop_percentage);
    
         res.push(t);
     }
@@ -505,7 +639,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ]])?;
 
     //Отправляем само содержимое таблицы
-    add_elements(&spreadsheet_id, &token, "A2:G31", &table_str)?;
+    //add_elements(&spreadsheet_id, &token, "A2:G31", &table_str)?;
 
     Ok(())
 }

@@ -11,4 +11,7 @@ jsonwebtoken = "9"
 dotenv = "0"
 chrono = { version = "0", features = ["serde"] } 
 comfy-table = "7"
+hex = "0"
+sha2 = "0"
+hmac = "0"
 
