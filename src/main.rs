@@ -502,7 +502,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "schoulder".to_string(), 
             "TP %".to_string(), 
             "SL %".to_string()
-    ]]);
+    ]])?;
 
     //Отправляем само содержимое таблицы
     add_elements(&spreadsheet_id, &token, "A2:G31", &table_str)?;
